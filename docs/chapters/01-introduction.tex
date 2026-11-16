@@ -1,0 +1,179 @@
+\chapter{Introduction}
+
+\section{Contexte du projet}
+
+MSI Consulting est une entreprise fictive de taille moyenne (50–100 employés) répartie en six départements :
+\begin{itemize}
+    \item \textbf{Direction} : 5 postes de cadres supérieurs
+    \item \textbf{Commercial} : 3 postes de vendeurs et managers commerciaux
+    \item \textbf{Informatique} : 3 techniciens IT et administrateurs
+    \item \textbf{Ressources Humaines} : 2 responsables RH
+    \item \textbf{Comptabilité} : 2 responsables financiers
+    \item \textbf{Serveurs} : infrastructure centralisée (DCs, NAS)
+\end{itemize}
+
+L'infrastructure est hébergée sur \textbf{VMware Workstation Pro} et comporte :
+\begin{itemize}
+    \item 1 pare-feu \textbf{pfSense} (routeur et filtrage)
+    \item 2 contrôleurs de domaine \textbf{Windows Server 2022}
+    \item 1 serveur de fichiers centralisé
+    \item 6 réseaux virtuels isolés (VLANs)
+    \item 1 workstation de test
+\end{itemize}
+
+Le domaine est \texttt{corpmsi.local}.
+
+\section{Objectifs pédagogiques}
+
+Ce projet couvre l'intégralité des compétences requises pour administrer une infrastructure Active Directory en entreprise :
+
+\begin{enumerate}
+    \item \textbf{Active Directory Domain Services}
+    \begin{itemize}
+        \item Déploiement d'une forêt et domaine
+        \item Création de Domain Controllers en réplication
+        \item Gestion des OUs et utilisateurs
+    \end{itemize}
+
+    \item \textbf{Services réseau critiques}
+    \begin{itemize}
+        \item DNS : zones directives et inverses
+        \item DHCP : étendues, failover, DHCP Relay
+        \item NTP : synchronisation temps sur PDC
+    \end{itemize}
+
+    \item \textbf{Politique de sécurité}
+    \begin{itemize}
+        \item Politiques de groupe (GPOs) par département
+        \item Politiques de mot de passe strictes (PSO)
+        \item BitLocker et chiffrement de disque
+        \item Contrôle d'accès aux fichiers (NTFS)
+    \end{itemize}
+
+    \item \textbf{Infrastructure de fichiers}
+    \begin{itemize}
+        \item Partages SMB par département
+        \item DFS Namespaces pour transparence réseau
+        \item Énumération basée sur l'accès (ABE)
+    \end{itemize}
+
+    \item \textbf{Pare-feu et segmentation réseau}
+    \begin{itemize}
+        \item pfSense : configuration multi-VLAN
+        \item Règles de pare-feu par interface
+        \item Isolation inter-VLAN sauf pour IT
+        \item Filtrage applicatif
+    \end{itemize}
+
+    \item \textbf{Proxy et filtrage URL}
+    \begin{itemize}
+        \item Squid en mode transparent
+        \item SquidGuard avec blacklists (UT1)
+        \item Inspection SSL MITM
+        \item Politiques de filtrage par département
+    \end{itemize}
+
+    \item \textbf{Troubleshooting}
+    \begin{itemize}
+        \item Diagnostic avec \texttt{dcdiag}
+        \item Analyse DNS avec \texttt{nslookup}
+        \item Vérification de réplication AD
+        \item Résolution de problèmes courants
+    \end{itemize}
+\end{enumerate}
+
+\section{Compétences développées}
+
+À la fin de ce projet, vous maîtriserez :
+
+\begin{description}
+    \item[Administration Active Directory] Configuration d'OUs, GPOs, PSO, replication inter-DC
+    \item[Gestion réseau] VLANs, segmentation, pare-feu stateful, DHCP Relay
+    \item[Sécurité] Chiffrement BitLocker, politiques de mot de passe, contrôle d'accès
+    \item[Diagnostic] Identification et résolution rapide de problèmes AD/DNS
+    \item[Infrastructure réelle] Compréhension de productions réelles en entreprise
+    \item[PowerShell] Scripts d'automatisation pour déploiement et maintenance
+\end{description}
+
+\section{Ce que j'ai appris}
+
+Durant la mise en place de ce projet, plusieurs découvertes majeures ont émergé :
+
+\begin{enumerate}
+    \item \textbf{L'importance du PDC}
+    \begin{itemize}
+        \item Le PDC Emulator doit être impérativement le serveur NTP fiable
+        \item Sans synchronisation temps correcte, Kerberos échoue silencieusement
+        \item Les timezone mal configurées causent des comportements anormaux subtils
+    \end{itemize}
+
+    \item \textbf{DNS et AD sont inséparables}
+    \begin{itemize}
+        \item AD repose entièrement sur DNS (SRV records, zone directives/inverses)
+        \item Un problème DNS minimal (ex : records GC manquants) peut paralyser partiellement le domaine
+        \item Les records sont créés automatiquement par Netlogon, mais peuvent nécessiter correction manuelle
+    \end{itemize}
+
+    \item \textbf{Le secure channel entre DCs}
+    \begin{itemize}
+        \item Le canal sécurisé Kerberos entre DC et domaine peut se casser
+        \item La commande \texttt{nltest /dsregdns} est essentielle pour diagnostiquer
+        \item \texttt{Nltest.exe /sc\_change\_pwd:domain} répare le canal en forçant le renouvellement du mot de passe machine
+    \end{itemize}
+
+    \item \textbf{VLANs et segmentation réalistes}
+    \begin{itemize}
+        \item La segmentation VLAN ne doit pas être prise à la légère
+        \item Bloquer les ports AD inadéquatement paralyse les clients
+        \item L'IT doit avoir un accès transversal complet, les autres VLANs doivent être isolés
+    \end{itemize}
+
+    \item \textbf{Les ports RPC dynamiques sont un cauchemar}
+    \begin{itemize}
+        \item Par défaut : ports 49152–65535 (16 383 ports !)
+        \item Restreindre à 60000–60099 permet des règles pare-feu gérables
+        \item Indispensable pour GPO, DFS, replication AD
+    \end{itemize}
+
+    \item \textbf{Le proxy SSL MITM complexe}
+    \begin{itemize}
+        \item Dépendre d'une CA personnalisée crée des dépendances GPO complexes
+        \item La whitelist SSL (No Bump) est critique pour les services de paiement et mises à jour
+        \item Sans GPO de déploiement du CA, tous les navigateurs affichent des avertissements
+    \end{itemize}
+
+    \item \textbf{BitLocker et TPM}
+    \begin{itemize}
+        \item BitLocker obligatoire nécessite TPM sur tous les postes (ou PIN supplémentaire)
+        \item La sauvegarde des clés dans AD via GPO est essentielle pour la récupération
+        \item Sans cela, un poste perdu = données perdues
+    \end{itemize}
+\end{enumerate}
+
+\section{Structure du document}
+
+Ce document est organisé comme suit :
+
+\begin{description}
+    \item[Chapitre 2 — Architecture] Plan d'adressage, VLANs, OUs, assignation réseau VMware
+    \item[Chapitre 3 — pfSense] Installation, configuration, règles firewall, NAT
+    \item[Chapitre 4 — GPOs] Toutes les politiques de groupe détaillées par département
+    \item[Chapitre 5 — DFS et fichiers] Serveur de fichiers, partages, DFS Namespaces
+    \item[Chapitre 6 — Proxy] Squid, SquidGuard, SSL MITM, ACLs
+    \item[Chapitre 7 — NTP] Configuration du serveur NTP sur PDC
+    \item[Chapitre 8 — Troubleshooting] Cas d'étude DNS complet avec diagnostique et résolution
+    \item[Chapitre 9 — Améliorations] Futures extensions du projet
+\end{description}
+
+\section{Prérequis pour le lecteur}
+
+Pour comprendre ce document, vous devez maîtriser :
+
+\begin{itemize}
+    \item Les bases d'Active Directory (OUs, GPOs, utilisateurs)
+    \item La configuration réseau IPv4 (subnets, masques)
+    \item L'administration Windows Server via GUI et PowerShell
+    \item Les concepts de pare-feu et filtering réseau
+\end{itemize}
+
+Les commandes PowerShell et les fichiers de configuration sont fournis dans le dépôt \texttt{/scripts} et \texttt{/configs}.

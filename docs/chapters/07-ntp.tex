@@ -1,0 +1,132 @@
+\chapter{Synchronisation NTP}
+
+\section{Importance du PDC}
+
+Le PDC Emulator doit être le serveur NTP fiable pour le domaine. Sans synchronisation correcte :
+
+\begin{itemize}
+    \item Kerberos échoue (fenêtres de validité des tickets)
+    \item Certificats sont rejetés (validation temporelle)
+    \item Réplication AD échoue
+    \item Événements de sécurité mal horodatés
+\end{itemize}
+
+\section{Configuration sur srv-dc01 (PDC)}
+
+Configurer srv-dc01 comme serveur NTP Stratum 2 fiable.
+
+\subsection{Ajouter les sources NTP}
+
+\begin{lstlisting}[style=powershell]
+# Configurer les pools NTP publics
+w32tm /config /manualpeerlist:"0.pool.ntp.org,0x9 1.pool.ntp.org,0x9" `
+    /syncfromflags:manual /reliable:YES /update
+\end{lstlisting}
+
+\subsection{Redémarrer le service}
+
+\begin{lstlisting}[style=powershell]
+net stop w32time
+net start w32time
+\end{lstlisting}
+
+\subsection{Forcer la synchronisation}
+
+\begin{lstlisting}[style=powershell]
+w32tm /resync /force
+\end{lstlisting}
+
+\section{Vérification}
+
+\subsection{Source NTP actuelle}
+
+\begin{lstlisting}[style=powershell]
+w32tm /query /source
+
+# Résultat attendu : 0.pool.ntp.org ou 1.pool.ntp.org
+\end{lstlisting}
+
+\subsection{État complet}
+
+\begin{lstlisting}[style=powershell]
+w32tm /query /status
+
+# Exemple de sortie :
+# Leap Indicator: 0 (no warning)
+# Stratum: 3
+# Precision: -20
+# Root Delay: 0.0127440s
+# Root Dispersion: 0.1154056s
+# ReferenceId: 0xC0A82801 (DC01 — stratum 2)
+# Last Successful Sync Time: 12/23/2026 14:53:42
+# Source: 0.pool.ntp.org
+# Poll Interval: 10 (1024s)
+\end{lstlisting}
+
+\subsection{Lister les peers}
+
+\begin{lstlisting}[style=powershell]
+w32tm /query /peers
+
+# Affiche les serveurs NTP configurés et leur état
+\end{lstlisting}
+
+\section{Configuration des clients}
+
+Les clients (DC secondaire, serveurs, postes) synchronisent automatiquement sur le PDC via Kerberos.
+
+\textbf{Aucune configuration supplémentaire requise}. Windows utilise le protocole de sécurité NT (sécurisé) pour synchroniser avec le PDC.
+
+\section{Troubleshooting NTP}
+
+\subsection{Synchronisation échouée}
+
+\begin{lstlisting}[style=powershell]
+# Vérifier la connectivité vers les serveurs NTP
+Test-NetConnection -ComputerName 0.pool.ntp.org -Port 123
+
+# Vérifier l'état du service W32Time
+Get-Service W32Time | Select-Object Status
+
+# Voir les logs
+Get-EventLog -LogName System | Where-Object Source -eq "W32Time" | Tail -20
+\end{lstlisting}
+
+\subsection{Écart de temps important}
+
+\begin{lstlisting}[style=powershell]
+# Vérifier l'heure système
+Get-Date
+
+# Vérifier l'écart par rapport à un serveur
+w32tm /stripchart /computer:0.pool.ntp.org /samples:5
+
+# Si écart > 15 minutes, impossible à synchroniser
+# → Fixer manuellement l'heure système
+Set-Date -Date "2026-05-23 14:30:00"
+\end{lstlisting}
+
+\subsection{Timezone incorrect}
+
+\begin{lstlisting}[style=powershell]
+# Afficher la timezone actuelle
+Get-TimeZone
+
+# Changer la timezone (exemple : Maroc)
+Set-TimeZone -Id "Morocco Standard Time"
+
+# Redémarrer W32Time
+Restart-Service W32Time
+\end{lstlisting}
+
+\section{Checklist NTP}
+
+\begin{itemize}
+    \item[\checkmark] Identifier le PDC (Emulator FSMO)
+    \item[\checkmark] Configurer sources NTP sur PDC
+    \item[\checkmark] Redémarrer W32Time
+    \item[\checkmark] Vérifier source avec \texttt{w32tm /query /source}
+    \item[\checkmark] Vérifier status complet
+    \item[\checkmark] Attendre 10 minutes de stabilisation
+    \item[\checkmark] Tester depuis un client
+\end{itemize}

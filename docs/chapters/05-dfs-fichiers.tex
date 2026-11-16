@@ -1,0 +1,156 @@
+\chapter{Système de fichiers centralisé — DFS}
+
+\section{Architecture}
+
+Le serveur de fichiers \texttt{srv-fichiers01} héberge les partages physiques SMB. DFS fournit une \textit{couche logique} transparente (\texttt{\\corpmsi.local\Partages}) qui masque la complexité des serveurs physiques.
+
+\section{Partages SMB}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|p{3cm}|}
+        \hline
+        \textbf{Partage} & \textbf{UNC Path} & \textbf{Groupe autorisé} \\
+        \hline
+        DIRECTION\$ & $\backslash\backslash$srv-fichiers01\textbackslash DIRECTION\$ & GRP\_Direction \\
+        \hline
+        COMMERCIAL\$ & $\backslash\backslash$srv-fichiers01\textbackslash COMMERCIAL\$ & GRP\_Commercial \\
+        \hline
+        INFORMATIQUE\$ & $\backslash\backslash$srv-fichiers01\textbackslash INFORMATIQUE\$ & GRP\_Informatique \\
+        \hline
+        RH\$ & $\backslash\backslash$srv-fichiers01\textbackslash RH\$ & GRP\_RH \\
+        \hline
+        COMPTABILITE\$ & $\backslash\backslash$srv-fichiers01\textbackslash COMPTABILITE\$ & GRP\_Comptabilite \\
+        \hline
+        COMMUN & $\backslash\backslash$srv-fichiers01\textbackslash COMMUN & Domain Users \\
+        \hline
+    \end{tabularx}
+    \caption{Partages SMB sur srv-fichiers01}
+    \label{tab:smb-shares}
+\end{table}
+
+\section{Installation DFS}
+
+\begin{lstlisting}
+Server Manager
+  → Manage
+    → Add Roles and Features
+      → Server Roles
+        → File and Storage Services
+          → File and iSCSI Services
+            → DFS Namespaces
+\end{lstlisting}
+
+\section{Création du Namespace}
+
+\begin{lstlisting}
+Server Manager → Tools → DFS Management
+  → Right-click Namespaces
+    → New Namespace
+
+Server        : srv-dc01
+Name          : Partages
+Type          : Domain-based Namespace
+\end{lstlisting}
+
+Le namespace devient accessible à : $\backslash\backslash$corpmsi.local\textbackslash Partages
+
+\section{Arborescence DFS}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\linewidth}{\centering
+    \begin{verbatim}
+\\corpmsi.local\Partages
+├── Direction → \\srv-fichiers01\DIRECTION$
+├── Commercial → \\srv-fichiers01\COMMERCIAL$
+├── Informatique → \\srv-fichiers01\INFORMATIQUE$
+├── RH → \\srv-fichiers01\RH$
+├── Comptabilite → \\srv-fichiers01\COMPTABILITE$
+└── Commun → \\srv-fichiers01\COMMUN
+    \end{verbatim}
+    \vspace{0.5cm}}}
+    \caption{Structure DFS Namespace}
+    \label{fig:dfs-structure}
+\end{figure}
+
+\section{Lier les dossiers DFS}
+
+Pour chaque dossier DFS, ajouter une cible physique :
+
+\begin{lstlisting}
+DFS Management
+  → Namespaces
+    → \\corpmsi.local\Partages
+      → Right-click Direction
+        → Add Folder Target
+
+Server     : srv-fichiers01
+Share      : DIRECTION$
+\end{lstlisting}
+
+\section{Énumération basée sur l'accès}
+
+\begin{lstlisting}
+\\corpmsi.local\Partages
+  → Right-click
+    → Properties
+      → Advanced tab
+        → [X] Enable access-based enumeration
+\end{lstlisting}
+
+Avec ABE activé, les utilisateurs voient uniquement les partages auxquels ils ont accès.
+
+\section{Permissions NTFS}
+
+Configurer les permissions NTFS sur chaque partage physique :
+
+\begin{lstlisting}[style=powershell]
+# Exemple : partage DIRECTION
+$path = "E:\Partages\DIRECTION"
+$group = "corpmsi\GRP_Direction"
+
+# Donner accès au groupe
+$acl = Get-Acl $path
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $group, "Modify", "ContainerInherit,ObjectInherit", "None", "Allow"
+)
+$acl.AddAccessRule($rule)
+Set-Acl $path $acl
+\end{lstlisting}
+
+\section{Vérification}
+
+Depuis un poste client (ex : PC-BUR01 sur VLAN 10 Direction) :
+
+\begin{lstlisting}[style=powershell]
+# Voir les partages DFS
+net view \\corpmsi.local\Partages
+
+# Accéder au partage
+net use Z: \\corpmsi.local\Partages\Direction
+
+# Vérifier le serveur physique
+Get-SmbConnection | Select-Object ServerName, ShareName
+\end{lstlisting}
+
+\section{Avantages DFS}
+
+\begin{itemize}
+    \item \textbf{Transparence} : Les utilisateurs ne connaissent pas le serveur physique
+    \item \textbf{Failover} : Si srv-fichiers01 tombe, ajouter une 2e cible (redondance)
+    \item \textbf{Équilibrage} : Les cibles multiples équilibrent la charge
+    \item \textbf{Migration} : Changer le serveur physique sans impacter les utilisateurs
+\end{itemize}
+
+\section{Checklist DFS}
+
+\begin{itemize}
+    \item[\checkmark] Installer rôle DFS Namespaces
+    \item[\checkmark] Créer namespace domain-based : \texttt{Partages}
+    \item[\checkmark] Créer dossiers logiques (Direction, Commercial, RH, etc.)
+    \item[\checkmark] Lier les cibles physiques sur srv-fichiers01
+    \item[\checkmark] Activer énumération basée sur l'accès
+    \item[\checkmark] Configurer permissions NTFS par groupe
+    \item[\checkmark] Tester accès depuis chaque VLAN
+\end{itemize}

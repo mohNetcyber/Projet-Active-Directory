@@ -1,0 +1,306 @@
+\chapter{Proxy applicatif — Squid et SquidGuard}
+
+\section{Architecture}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\linewidth}{\centering
+    \begin{verbatim}
+Postes clients (V10, V20, V50, V60)
+        ↓ HTTP/HTTPS (80/443)
+   [pfSense Squid Transparent 3128/3129]
+        ↓ intercept + SSL MITM
+   [SquidGuard Filtrage URL]
+        ↓
+   [Internet]
+
+V30 Informatique → accès direct (bypass proxy)
+    \end{verbatim}
+    \vspace{0.5cm}}}
+    \caption{Architecture Proxy}
+    \label{fig:proxy-arch}
+\end{figure}
+
+\section{Certificat CA pour SSL MITM}
+
+\begin{lstlisting}
+System > Certificate Manager > CAs > + Add
+
+Descriptive name   : Proxy-CA-corpmsi
+Method             : Create internal CA
+Key type           : RSA
+Key length         : 2048
+Digest algorithm   : SHA256
+Lifetime           : 3650 days
+Common Name        : Proxy-CA-corpmsi
+\end{lstlisting}
+
+\textbf{Important :} Exporter le .crt et le déployer via GPO sur les VLANs contrôlés.
+
+\section{Installation et configuration Squid}
+
+\begin{lstlisting}
+System > Package Manager > Available Packages
+  → Rechercher "squid"
+  → Installer
+\end{lstlisting}
+
+\begin{lstlisting}
+Services > Squid Proxy Server > General
+
+Enable Squid              : [X]
+Proxy Port               : 3128
+SSL Port                 : 3129 (MITM)
+Keep Settings/Data       : [X]
+Log Store Directory      : /var/squid/logs
+\end{lstlisting}
+
+\section{Mode Transparent}
+
+\begin{lstlisting}
+Transparent HTTP Proxy       : [X]
+Transparent Proxy Interface  : DIRECTION, COMMERCIAL, RH, COMPTABILITE
+Transparent HTTPS Proxy      : [X]
+Bypass Proxy for Private     : [X]
+\end{lstlisting}
+
+\section{Inspection SSL}
+
+\begin{lstlisting}
+SSL Man In the Middle Filtering
+
+Enable SSL filtering         : [X]
+SSL Intercept Interfaces     : DIRECTION, COMMERCIAL, RH, COMPTABILITE
+SSL Proxy Port              : 3129
+SSL Certificate Authority   : Proxy-CA-corpmsi
+Enable SSL Caching          : [X]
+Certificate Adapt           : setValidAfter, setValidBefore
+\end{lstlisting}
+
+\subsection{Whitelist SSL (No Bump)}
+
+\begin{lstlisting}
+Target Categories > + Add
+
+Name : Whitelist
+Regular expression :
+(^|\.)windowsupdate\.com$
+(^|\.)update\.microsoft\.com$
+(^|\.)download\.microsoft\.com$
+(^|\.)login\.microsoftonline\.com$
+(^|\.)office\.com$
+(^|\.)office365\.com$
+(^|\.)paypal\.com$
+(^|\.)stripe\.com$
+\end{lstlisting}
+
+\section{Installation SquidGuard}
+
+\begin{lstlisting}
+System > Package Manager > Available Packages
+  → Rechercher "squidguard"
+  → Installer
+\end{lstlisting}
+
+\begin{lstlisting}
+Services > SquidGuard Proxy Filter > General
+
+Enable           : [X]
+Enable log       : [X]
+Blacklist        : [X]
+Blacklist URL    : https://dsi.ut-capitole.fr/blacklists/download/blacklists.tar.gz
+\end{lstlisting}
+
+Télécharger (attendre 5–10 minutes).
+
+\section{Catégories UT1 (après téléchargement)}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|p{4cm}|}
+        \hline
+        \textbf{Catégorie} & \textbf{Description} \\
+        \hline
+        adult & Pornographie \\
+        \hline
+        gambling & Jeux d'argent \\
+        \hline
+        audio-video & Streaming (YouTube, Netflix) \\
+        \hline
+        malware & Virus, trojans \\
+        \hline
+        phishing & Hameçonnage \\
+        \hline
+        social\_networks & Facebook, Instagram, X \\
+        \hline
+        vpn & Services VPN anonymisants \\
+        \hline
+        download & Téléchargements (warez, torrents) \\
+        \hline
+    \end{tabularx}
+    \caption{Catégories UT1 (partiel)}
+    \label{tab:ut1-categories}
+\end{table}
+
+\section{ACLs par VLAN}
+
+\subsection{ACL\_DIRECTION}
+
+\begin{lstlisting}
+Name        : ACL_DIRECTION
+Client IP   : 192.168.10.0/24
+Order       : 1
+
+Configuration :
+WL_Autorise (Whitelist)    → whitelist
+adult / mixed_adult        → deny
+gambling / arjel           → deny
+audio-video / radio        → deny
+social_networks            → allow
+chat / webmail             → allow
+download / warez           → deny
+default                    → allow
+\end{lstlisting}
+
+\subsection{ACL\_RH}
+
+\begin{lstlisting}
+Name        : ACL_RH
+Client IP   : 192.168.50.0/24
+Order       : 3
+
+Configuration :
+WL_Autorise (Whitelist)    → whitelist
+adult / mixed_adult        → deny
+gambling / arjel           → deny
+audio-video / radio        → deny
+social_networks            → deny
+chat / webmail             → deny
+download / warez           → deny
+default                    → allow
+\end{lstlisting}
+
+\subsection{ACL\_COMPTABILITE}
+
+\begin{lstlisting}
+Name           : ACL_COMPTABILITE
+Client IP      : 192.168.60.0/24
+Order          : 4
+Default Action : deny
+
+Configuration :
+WL_Autorise (Whitelist)    → whitelist
+(tous les autres)          → deny
+default                    → deny
+\end{lstlisting}
+
+\section{NAT Port Forward}
+
+Pour chaque VLAN contrôlé (DIRECTION, COMMERCIAL, RH, COMPTABILITE) :
+
+\begin{lstlisting}
+Firewall > NAT > Port Forward > + Add
+
+Interface      : <VLAN>
+Protocol       : TCP
+Source         : <VLAN> net
+Destination    : !(not) 192.168.0.0/8
+Dest Port      : 80
+Redirect IP    : 127.0.0.1
+Redirect Port  : 3128
+Description    : Redirect HTTP vers Squid
+\end{lstlisting}
+
+Répéter pour port 443 → 3129.
+
+\section{Règles Firewall}
+
+Pour chaque interface contrôlée :
+
+\begin{lstlisting}
+Firewall > Rules > <VLAN> > + Add
+
+Action     : PASS
+Protocol   : TCP
+Source     : <VLAN> net
+Destination: 127.0.0.1
+Port dest  : 3128, 3129
+Description: Autoriser Squid
+
+Action     : BLOCK
+Protocol   : TCP
+Source     : <VLAN> net
+Destination: !(not) 192.168.0.0/8
+Port dest  : 80, 443
+Description: Bloquer bypass proxy
+\end{lstlisting}
+
+\section{Page de blocage}
+
+\begin{lstlisting}[language=bash]
+cat > /usr/local/www/blocked.html << 'HTML'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Accès bloqué</title>
+    <style>
+        body { font-family: Arial; text-align: center; padding: 50px; }
+        .box { background: white; padding: 40px; max-width: 500px;
+               margin: auto; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #d9534f; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>Accès refusé</h1>
+        <p>Ce site est bloqué par la politique de sécurité de <strong>corpmsi</strong>.</p>
+        <p>Contactez le service informatique pour une demande d'exception.</p>
+    </div>
+</body>
+</html>
+HTML
+\end{lstlisting}
+
+\section{Récapitulatif des politiques par VLAN}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|c|c|c|c|}
+        \hline
+        \textbf{Catégorie} & \textbf{V10 Dir} & \textbf{V20 Com} & \textbf{V50 RH} & \textbf{V60 Compt} \\
+        \hline
+        Social networks & allow & allow & deny & deny \\
+        \hline
+        Webmail & allow & allow & deny & deny \\
+        \hline
+        Chat & allow & allow & deny & deny \\
+        \hline
+        Audio-video & deny & deny & deny & deny \\
+        \hline
+        Gambling & deny & deny & deny & deny \\
+        \hline
+        Adult & deny & deny & deny & deny \\
+        \hline
+        Download & deny & deny & deny & deny \\
+        \hline
+        Default & allow & allow & allow & deny \\
+        \hline
+    \end{tabularx}
+    \caption{Politiques proxy par VLAN}
+    \label{tab:proxy-policies}
+\end{table}
+
+\section{Checklist}
+
+\begin{itemize}
+    \item[\checkmark] Créer CA Proxy-CA-corpmsi
+    \item[\checkmark] Exporter .crt et déployer via GPO
+    \item[\checkmark] Installer Squid + SquidGuard
+    \item[\checkmark] Configurer mode transparent
+    \item[\checkmark] Activer SSL MITM
+    \item[\checkmark] Télécharger blacklists UT1
+    \item[\checkmark] Créer ACLs par VLAN
+    \item[\checkmark] Configurer NAT port forward
+    \item[\checkmark] Ajouter règles firewall
+    \item[\checkmark] Tester depuis chaque VLAN
+\end{itemize}

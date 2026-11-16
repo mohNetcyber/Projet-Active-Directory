@@ -1,0 +1,237 @@
+\chapter{Améliorations futures}
+
+\section{Restriction des ports RPC dynamiques}
+
+\subsection{Pourquoi restreindre ?}
+
+Par défaut, RPC utilise les ports 49152–65535 (16 383 ports). Écrire des règles pare-feu pour 16 383 ports est ingérable.
+
+Solution : restreindre à une plage fixe de 100 ports (60000–60099).
+
+\subsection{Configuration sur les DCs}
+
+\begin{lstlisting}[style=powershell]
+# Sur srv-dc01 et srv-dc02
+reg add "HKLM\SOFTWARE\Microsoft\Rpc\Internet" `
+    /v Ports /t REG_MULTI_SZ /d "60000-60099" /f
+
+reg add "HKLM\SOFTWARE\Microsoft\Rpc\Internet" `
+    /v PortsInternetAvailable /t REG_SZ /d "Y" /f
+
+reg add "HKLM\SOFTWARE\Microsoft\Rpc\Internet" `
+    /v UseInternetPorts /t REG_SZ /d "Y" /f
+
+# Redémarrer RPC
+Restart-Service RpcSs
+
+# Vérifier
+reg query "HKLM\SOFTWARE\Microsoft\Rpc\Internet"
+\end{lstlisting}
+
+\subsection{Règle pfSense mise à jour}
+
+Remplacer la règle 49152–65535 par :
+
+\begin{lstlisting}
+Action       : Pass
+Protocol     : TCP
+Source       : LAN net
+Destination  : DomainControllers
+Dest Port    : 60000 – 60099
+Description  : RPC dynamique restreint AD
+\end{lstlisting}
+
+\section{Accès Internet sécurisé}
+
+\subsection{Problème actuel}
+
+Actuellement, le proxy Squid est optionnel pour l'IT. Le filtrage URL peut être contourné.
+
+\subsection{Amélioration}
+
+\begin{itemize}
+    \item \textbf{NAT obligatoire} : Rediriger HTTP/HTTPS de toutes les interfaces (sauf IT) vers Squid
+    \item \textbf{Filtrage DNS} : pfBlockerNG pour bloquer les domaines malveillants au niveau DNS
+    \item \textbf{Audit proxy} : Centraliser et analyser les logs Squid pour détection de menaces
+\end{itemize}
+
+\section{pfBlockerNG — Blocage DNS}
+
+\subsection{Installation}
+
+\begin{lstlisting}
+System > Package Manager > Available Packages
+  → pfBlockerNG-devel
+  → Install
+\end{lstlisting}
+
+\subsection{Configuration}
+
+\begin{lstlisting}
+Firewall > pfBlockerNG > DNSBL
+
+Enable DNSBL      : [X]
+Active Lists      : [X] ads
+                    [X] malware
+                    [X] phishing
+                    [X] trackers
+\end{lstlisting}
+
+pfBlockerNG bloquera les requêtes DNS vers ces domaines.
+
+\section{Suricata IDS/IPS}
+
+\subsection{Détection d'attaques Active Directory}
+
+Suricata est un IDS/IPS capable de détecter les attaques courantes :
+
+\begin{itemize}
+    \item Golden Ticket (tickets Kerberos forgés)
+    \item DCSync (réplication frauduleuse)
+    \item Pass-the-Hash (réutilisation de hash NTLM)
+    \item Brute force Kerberos
+    \item SMB exploits (EternalBlue, etc.)
+\end{itemize}
+
+\subsection{Installation}
+
+\begin{lstlisting}
+System > Package Manager > Available Packages
+  → Suricata
+  → Install
+
+Services > Suricata > Interfaces
+  → Add LAN interface
+  → Enable
+  → ET (Emerging Threats) ruleset
+\end{lstlisting}
+
+\section{OpenVPN — Accès télétravail}
+
+\subsection{Cas d'usage}
+
+Permet aux employés de se connecter sécurisement au domaine depuis l'extérieur (télétravail).
+
+\subsection{Configuration rapide}
+
+\begin{lstlisting}
+VPN > OpenVPN > Wizards > Local User Access
+
+Protocol             : UDP on IPv4
+Port                 : 1194
+TLS Authentication   : [X]
+Local Network        : 192.168.40.0/24
+DNS Server 1         : 192.168.40.10
+DNS Default Domain   : corpmsi.local
+\end{lstlisting}
+
+\subsection{Déploiement client}
+
+\begin{enumerate}
+    \item Installer openvpn-client-export package
+    \item Exporter le profil .ovpn
+    \item Charger dans OpenVPN Connect (client)
+    \item Se connecter
+    \item Accéder aux partages DFS et serveurs AD via VPN
+\end{enumerate}
+
+\section{Capture de paquets pour debug}
+
+\subsection{Capture trafic Kerberos}
+
+\begin{lstlisting}
+Diagnostics > Packet Capture
+
+Interface      : LAN
+Host Address   : 192.168.40.10
+Protocol       : TCP
+Port           : 88 (Kerberos)
+Packet Count   : 100
+→ Start
+\end{lstlisting}
+
+Télécharger le fichier .pcap et analyser dans Wireshark.
+
+\section{Monitoring et SIEM}
+
+\subsection{Tableau de bord}
+
+Métriques à surveiller :
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|p{4cm}|}
+        \hline
+        \textbf{Métrique} & \textbf{Outil} \\
+        \hline
+        Trafic temps réel & pfSense Status → Traffic Graph \\
+        \hline
+        Règles actives & Firewall → Rules (hit counts) \\
+        \hline
+        Connexions actives & Diagnostics → States \\
+        \hline
+        Logs pare-feu & Status → Logs → Firewall \\
+        \hline
+        Baux DHCP & Status → DHCP Leases \\
+        \hline
+        Logs Proxy & Diagnostics → Command → tail /var/log/squid/ \\
+        \hline
+        Logs AD & Event Viewer → Windows Logs \\
+        \hline
+    \end{tabularx}
+    \caption{Métriques et outils de monitoring}
+    \label{tab:monitoring}
+\end{table}
+
+\subsection{Centralisation SIEM}
+
+Pour une infrastructure production :
+
+\begin{itemize}
+    \item \textbf{Elk Stack} (Elasticsearch, Logstash, Kibana)
+    \item \textbf{Splunk} (coûteux mais très puissant)
+    \item \textbf{Graylog} (open-source, léger)
+    
+    Envoyer les logs de :
+    \begin{itemize}
+        \item pfSense (syslog)
+        \item Windows Event Log (WEF = Windows Event Forwarding)
+        \item Squid/SquidGuard (syslog)
+    \end{itemize}
+\end{itemize}
+
+\section{Haute disponibilité}
+
+\subsection{DC redondant supplémentaire}
+
+Ajouter srv-dc03 pour redondance 3-way :
+
+\begin{itemize}
+    \item Réplication complète
+    \item Sites AD pour failover géographique
+    \item Load balancing DHCP
+\end{itemize}
+
+\subsection{NAS haute disponibilité}
+
+Remplacer srv-fichiers01 par une paire en failover :
+
+\begin{itemize}
+    \item Réplication DFS entre deux serveurs
+    \item Basculement automatique en cas de défaillance
+\end{itemize}
+
+\section{Checklist d'améliorations}
+
+\begin{itemize}
+    \item[ ] Restreindre ports RPC à 60000–60099
+    \item[ ] Installer et configurer pfBlockerNG
+    \item[ ] Installer et configurer Suricata
+    \item[ ] Configurer OpenVPN pour télétravail
+    \item[ ] Mettre en place SIEM centralisé
+    \item[ ] Ajouter DC tertiaire (srv-dc03)
+    \item[ ] Mettre en place NAS en failover
+    \item[ ] Configurer replication DFS sur 2 serveurs
+    \item[ ] Audit DNS avancé (query logging)
+    \item[ ] Backup AD automatisé
+\end{itemize}

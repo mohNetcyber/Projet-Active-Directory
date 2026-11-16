@@ -1,0 +1,56 @@
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.pdf
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.dvi
+*.ps
+*.bbl
+*.blg
+*.brf
+*.dpth
+*.md5
+*.mps
+*.ilg
+*.ind
+*.ist
+*.lof
+*.lot
+*.tex.bak
+*.texpadtmp
+
+# Windows
+Thumbs.db
+desktop.ini
+.DS_Store
+*.lnk
+*.tmp
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+
+# Node (if applicable)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python (if applicable)
+venv/
+env/
+*.pyc
+*.pyo

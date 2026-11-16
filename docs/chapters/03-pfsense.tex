@@ -1,0 +1,256 @@
+\chapter{Pare-feu pfSense}
+
+\section{Pourquoi un pare-feu dans un lab AD ?}
+
+Dans un environnement de lab isolé, un pare-feu n'est techniquement pas \textbf{obligatoire}. Les VMs communiquent sans problème sur le réseau NAT interne.
+
+Cependant, \textbf{l'ajouter est crucial} pour deux raisons :
+
+\begin{enumerate}
+    \item \textbf{Réalisme professionnel} : Chaque déploiement AD en production possède un pare-feu frontal. Apprendre AD sans pare-feu revient à ignorer la moitié du métier.
+    
+    \item \textbf{Comprendre les ports AD} : Active Directory utilise une vingtaine de ports précis (53 DNS, 88 Kerberos, 389 LDAP, 445 SMB, etc.). Sans pare-feu, tout passe partout. Avec pfSense, si vous bloquez le port 88, Kerberos casse — vous apprenez \textit{pourquoi}.
+\end{enumerate}
+
+\section{Installation de pfSense}
+
+\subsection{Téléchargement et création VM}
+
+\begin{lstlisting}[language=bash]
+# Télécharger pfSense CE (AMD64 ISO) depuis :
+# https://www.netgate.com/pfsense-plus-software/try-pfsense
+
+# Créer une VM dans VMware Workstation Pro :
+# - Nom : fw-pfsense
+# - Type : BSD, FreeBSD 64-bit
+# - RAM : 1024 MB
+# - Disque : 20 GB (VDI dynamique)
+# - Carte 1 : NAT (accès Internet)
+# - Carte 2 : Réseau interne AD-Lab
+\end{lstlisting}
+
+\subsection{Configuration console au démarrage}
+
+Lors du premier démarrage, pfSense pose des questions :
+
+\begin{lstlisting}[language=bash]
+Should VLANs be set up now? [y|n] → n
+
+Enter WAN interface name or 'a' for auto → em0
+Enter LAN interface name or 'a' for auto → em1
+Enter Optional interface 1 name → [Entrée — pas d'OPT1 pour maintenant]
+
+Do you want to proceed? [y|n] → y
+
+# À l'invite "Enter option :" tapez : 2
+# Configure IP sur interface LAN :
+
+Enter IPv4 address for LAN → 192.168.40.1
+Enter IPv4 subnet bit count → 24
+Enter upstream gateway (press Enter for none) → [Entrée]
+Enable DHCP on LAN? → n
+\end{lstlisting}
+
+\section{Configuration initiale}
+
+\subsection{Accès interface web}
+
+Depuis une VM (ex : srv-dc01) ouvrez un navigateur :
+
+\begin{lstlisting}
+URL     : https://192.168.40.1
+Login   : admin
+Mot de passe : pfsense
+\end{lstlisting}
+
+Acceptez l'avertissement certificat SSL auto-signé.
+
+\subsection{Assistant de configuration}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|p{5cm}|}
+        \hline
+        \textbf{Paramètre} & \textbf{Valeur} \\
+        \hline
+        Hostname & fw-pfsense \\
+        \hline
+        Domain & corpmsi.local \\
+        \hline
+        Primary DNS & 192.168.40.10 \\
+        \hline
+        Secondary DNS & 192.168.40.11 \\
+        \hline
+        Timezone & Europe/Paris \\
+        \hline
+        NTP Server & 0.pfsense.pool.ntp.org \\
+        \hline
+        WAN Type & DHCP \\
+        \hline
+        LAN IP & 192.168.40.1/24 \\
+        \hline
+        Admin Password & DomainP@ssw0rd!Lab \\
+        \hline
+    \end{tabularx}
+    \caption{Configuration pfSense}
+    \label{tab:pfsense-config}
+\end{table}
+
+\section{Interfaces réseau}
+
+\subsection{Assignation}
+
+\begin{lstlisting}
+Interfaces > Assignments
+\end{lstlisting}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|p{2cm}|p{4cm}|}
+        \hline
+        \textbf{Nom} & \textbf{Interface} & \textbf{Configuration} \\
+        \hline
+        WAN & em0 & DHCP (VMware NAT) \\
+        \hline
+        LAN & em1 & 192.168.40.1/24 \\
+        \hline
+    \end{tabularx}
+    \caption{Interfaces pfSense}
+    \label{tab:pfsense-interfaces}
+\end{table}
+
+\section{Règles de pare-feu}
+
+\subsection{Principe général}
+
+\begin{itemize}
+    \item Les règles s'appliquent au trafic \textbf{entrant} sur chaque interface
+    \item Première règle qui correspond s'applique (évaluation haut en bas)
+    \item Trafic de retour autorisé automatiquement (stateful)
+    \item Bloquer inter-VLAN utilisateurs
+\end{itemize}
+
+\subsection{Interface WAN}
+
+\begin{lstlisting}[language=bash]
+# Politique par défaut : BLOQUER TOUT
+
+# Bloquer RFC1918 entrant (antispoofing)
+Bloquer | RFC1918 (192.168.0.0/8, 172.16.0.0/12, 10.0.0.0/8)
+
+# Bloquer bogons
+Bloquer | Bogon networks
+
+# Bloquer tout le reste (implicite)
+\end{lstlisting}
+
+\subsection{Interface LAN}
+
+\begin{lstlisting}[language=bash]
+# Laisser tout passer par défaut (lab)
+
+# En production, ajouter des règles granulaires :
+Autoriser | TCP/UDP → 53 (DNS)
+Autoriser | TCP/UDP → 88 (Kerberos)
+Autoriser | TCP → 389, 636 (LDAP)
+Autoriser | TCP → 445 (SMB)
+Autoriser | TCP → 3268, 3269 (GC)
+Autoriser | TCP → 60000-60099 (RPC restreint)
+Autoriser | TCP/UDP → 67, 68 (DHCP)
+Autoriser | TCP/UDP → 123 (NTP)
+\end{lstlisting}
+
+\section{Ports Active Directory — Référence}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|p{4cm}|}
+        \hline
+        \textbf{Port} & \textbf{Service} & \textbf{Si bloqué} \\
+        \hline
+        53 & DNS & Impossible joindre domaine \\
+        \hline
+        88 & Kerberos & "Cannot contact DC" \\
+        \hline
+        135 & RPC Mapper & GPOs n'appliquent pas \\
+        \hline
+        389 & LDAP & ADUC ne liste rien \\
+        \hline
+        445 & SMB & Scripts/profils ne chargent pas \\
+        \hline
+        3268 & Global Catalog & Recherche AD impossible \\
+        \hline
+        60000–60099 & RPC dynamique & Replication échoue \\
+        \hline
+    \end{tabularx}
+    \caption{Ports AD critiques}
+    \label{tab:ad-ports}
+\end{table}
+
+\section{DHCP Relay}
+
+pfSense relaye les requêtes DHCP vers les DCs Windows (qui gèrent le DHCP).
+
+\subsection{Configuration}
+
+\begin{lstlisting}
+Services > DHCP Relay
+\end{lstlisting}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|p{5cm}|}
+        \hline
+        \textbf{Paramètre} & \textbf{Valeur} \\
+        \hline
+        Enable DHCP Relay & Coché \\
+        \hline
+        Interfaces & LAN (sauf WAN) \\
+        \hline
+        DHCP Servers & 192.168.40.10 (srv-dc01), 192.168.40.11 (srv-dc02) \\
+        \hline
+    \end{tabularx}
+    \caption{Configuration DHCP Relay}
+    \label{tab:dhcp-relay}
+\end{table}
+
+\textbf{Important :} Désactiver le DHCP Server pfSense sur les interfaces. Le DHCP Relay et Server sont mutuellement exclusifs.
+
+\section{NAT sortant}
+
+\begin{lstlisting}
+Firewall > NAT > Outbound
+\end{lstlisting}
+
+Mode : Automatic (convertit automatiquement le trafic LAN vers IP WAN)
+
+\section{Troubleshooting pfSense}
+
+\subsection{Pas de connectivité depuis les VMs}
+
+\begin{lstlisting}[language=bash]
+# Étape 1 : Vérifier la passerelle
+ping 192.168.40.1
+
+# Étape 2 : Vérifier accès WAN
+ping 8.8.8.8
+
+# Étape 3 : Vérifier DNS
+nslookup microsoft.com 192.168.40.10
+
+# Étape 4 : Vérifier si pfSense a Internet
+# Depuis console pfSense : ping 8.8.8.8
+\end{lstlisting}
+
+\section{Checklist déploiement pfSense}
+
+\begin{itemize}
+    \item[\checkmark] Télécharger et installer pfSense
+    \item[\checkmark] Configurer interfaces (em0 WAN, em1 LAN)
+    \item[\checkmark] Configurer IP LAN (192.168.40.1/24)
+    \item[\checkmark] Activer DHCP Relay vers srv-dc01 + srv-dc02
+    \item[\checkmark] Désactiver DHCP Server pfSense
+    \item[\checkmark] Configurer admin password
+    \item[\checkmark] Ajouter forwarders DNS (8.8.8.8, 1.1.1.1)
+    \item[\checkmark] Tester connectivité depuis vm
+\end{itemize}

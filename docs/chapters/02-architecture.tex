@@ -1,0 +1,267 @@
+\chapter{Architecture réseau et infrastructure}
+
+\section{Vue d'ensemble}
+
+L'infrastructure corpmsi.local est composée de 6 VLANs isolés, hébergés sur une machine physique exécutant VMware Workstation Pro. Chaque VLAN représente un département ou service.
+
+\section{Diagramme réseau complet}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\linewidth}{\centering
+    \begin{verbatim}
+┌─────────────────────────────────────────────────────┐
+│         Internet / WAN                              │
+│       (réseau hôte / NAT VirtualBox)                │
+└──────────────────┬──────────────────────────────────┘
+                   │
+                   │ em0 WAN (DHCP)
+          ┌────────────────────┐
+          │    pfSense CE      │
+          │  192.168.40.1/24   │
+          │   Firewall/Router  │
+          └────┬───────────────┘
+               │ em1–em6 (6 VLANs)
+    ┌──────────┼──────────────────────┐
+    │          │                      │
+┌───────┐  ┌────────┐  ┌────────┐  ┌────────┐
+│VLAN10 │  │VLAN20  │  │VLAN30  │  │VLAN40  │  ┌─────────┐ ┌──────────┐
+│DIR    │  │COMM    │  │IT      │  │SERVERS │  │VLAN50   │ │VLAN60    │
+│em6    │  │em2     │  │em3     │  │em1     │  │RH (em4) │ │COMPT(em5)│
+└───────┘  └────────┘  └────────┘  └────────┘  └─────────┘ └──────────┘
+    \end{verbatim}
+    \vspace{0.5cm}}}
+    \caption{Topologie réseau complète}
+    \label{fig:topology}
+\end{figure}
+
+\section{Adressage IP — Plan complet}
+
+\begin{longtable}{|p{3cm}|p{3cm}|p{3cm}|p{2cm}|}
+    \hline
+    \textbf{VLAN} & \textbf{Réseau} & \textbf{Passerelle} & \textbf{DHCP} \\
+    \hline
+    \endhead
+    
+    V10 Direction & 192.168.10.0/24 & 192.168.10.1 & Oui \\
+    \hline
+    V20 Commercial & 192.168.20.0/24 & 192.168.20.1 & Non \\
+    \hline
+    V30 Informatique & 192.168.30.0/24 & 192.168.30.1 & Oui \\
+    \hline
+    V40 Serveurs & 192.168.40.0/24 & 192.168.40.1 & Non \\
+    \hline
+    V50 RH & 192.168.50.0/24 & 192.168.50.1 & Oui \\
+    \hline
+    V60 Comptabilité & 192.168.60.0/24 & 192.168.60.1 & Oui \\
+    \hline
+    
+    \caption{Plan d'adressage des VLANs}
+    \label{tab:vlans}
+\end{longtable}
+
+\section{Adresses IP fixes}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|p{4cm}|}
+        \hline
+        \textbf{Hôte} & \textbf{IP} & \textbf{Rôle} \\
+        \hline
+        srv-dc01 & 192.168.40.10 & DC principal, PDC, DNS, DHCP \\
+        \hline
+        srv-dc02 & 192.168.40.11 & DC secondaire, DNS, GC \\
+        \hline
+        srv-fichiers01 & 192.168.40.20 & Serveur fichiers (SMB, DFS) \\
+        \hline
+        pfSense (LAN) & 192.168.40.1 & Passerelle VLAN 40 \\
+        \hline
+        pfSense (em0) & DHCP / FAI & Accès Internet \\
+        \hline
+    \end{tabularx}
+    \caption{Adresses IP fixes de l'infrastructure}
+    \label{tab:ips}
+\end{table}
+
+\section{Structure Active Directory}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\linewidth}{\centering
+    \begin{verbatim}
+corpmsi.local (domaine)
+├── OU=Direction
+│   ├── alice.dupont
+│   ├── GRP_Direction (groupe)
+│   └── (5 postes clients)
+├── OU=Commercial
+│   ├── bob.martin
+│   ├── charlie.bernard
+│   ├── GRP_Commercial (groupe)
+│   └── (3 postes clients)
+├── OU=Informatique
+│   ├── david.laurent
+│   ├── GRP_Informatique (groupe)
+│   └── (3 postes technicians)
+├── OU=RH
+│   ├── eve.moreau
+│   ├── frank.petit
+│   ├── GRP_RH (groupe)
+│   └── (2 postes)
+├── OU=Comptabilite
+│   ├── grace.roux
+│   ├── henry.blanc
+│   ├── GRP_Comptabilite (groupe)
+│   └── (2 postes)
+└── OU=Serveurs
+    ├── CN=srv-dc01
+    ├── CN=srv-dc02
+    └── CN=srv-fichiers01
+    \end{verbatim}
+    \vspace{0.5cm}}}
+    \caption{Structure des Unités Organisationnelles}
+    \label{fig:ou-structure}
+\end{figure}
+
+\section{Configuration VMware Workstation Pro}
+
+\subsection{Virtual Network Editor}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|l|l|}
+        \hline
+        \textbf{VMnet} & \textbf{Type} & \textbf{Sous-réseau} & \textbf{Utilisation} \\
+        \hline
+        VMnet0 & Bridged & (réseau physique) & WAN pfSense \\
+        \hline
+        VMnet1 & Host-only & 192.168.10.0/24 & V10 Direction \\
+        \hline
+        VMnet2 & Host-only & 192.168.20.0/24 & V20 Commercial \\
+        \hline
+        VMnet3 & Host-only & 192.168.30.0/24 & V30 Informatique \\
+        \hline
+        VMnet4 & Host-only & 192.168.40.0/24 & V40 Serveurs \\
+        \hline
+        VMnet5 & Host-only & 192.168.50.0/24 & V50 RH \\
+        \hline
+        VMnet6 & Host-only & 192.168.60.0/24 & V60 Comptabilité \\
+        \hline
+    \end{tabularx}
+    \caption{Configuration VMware Workstation Pro}
+    \label{tab:vmware}
+\end{table}
+
+\textbf{Important :} Le DHCP VMware doit être \textbf{désactivé} sur VMnet1–VMnet6. Le DHCP sera géré par les Domain Controllers via DHCP Relay depuis pfSense.
+
+\subsection{Affectation réseau des VMs}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|p{3cm}|}
+        \hline
+        \textbf{VM} & \textbf{Cartes réseau} & \textbf{Assignation} \\
+        \hline
+        pfSense & 8 cartes & em0=VMnet0 WAN, em1–em6=VMnet1–6 \\
+        \hline
+        srv-dc01 & 1 carte & VMnet4 (VLAN 40 Serveurs) \\
+        \hline
+        srv-dc02 & 1 carte & VMnet4 (VLAN 40 Serveurs) \\
+        \hline
+        srv-fichiers01 & 1 carte & VMnet4 (VLAN 40 Serveurs) \\
+        \hline
+        PC-BUR01 & 1 carte & VMnet1–6 (configurable pour test) \\
+        \hline
+    \end{tabularx}
+    \caption{Affectation réseau des VMs}
+    \label{tab:vm-network}
+\end{table}
+
+\section{Pile technique détaillée}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|p{2.5cm}|p{1.5cm}|p{5.5cm}|}
+        \hline
+        \textbf{Outil} & \textbf{Version} & \textbf{Rôle dans l'infrastructure} \\
+        \hline
+        VMware Workstation Pro & 17.x & Hyperviseur pour toutes les VMs \\
+        \hline
+        Windows Server 2022 & Std & OS pour DCs et serveur fichiers \\
+        \hline
+        Windows 11 & 22H2 & Workstation client de test \\
+        \hline
+        pfSense CE & 2.7.x & Pare-feu, routeur, DHCP Relay \\
+        \hline
+        AD DS 2022 & — & Annuaire centralisé \\
+        \hline
+        DNS Server & 2022 & Résolution corpmsi.local \\
+        \hline
+        DHCP Server & 2022 & Attribution IP par VLAN \\
+        \hline
+        DFS Namespaces & 2022 & Partages centralisés transparents \\
+        \hline
+        Squid & 6.x & Proxy applicatif transparent \\
+        \hline
+        SquidGuard & 1.4.x & Filtrage URL + blacklists UT1 \\
+        \hline
+        OpenSSL & 3.x & SSL/TLS MITM pour inspection \\
+        \hline
+    \end{tabularx}
+    \caption{Pile technique complète}
+    \label{tab:stack}
+\end{table}
+
+\section{Département Direction — V10}
+
+\begin{itemize}
+    \item \textbf{Réseau} : 192.168.10.0/24
+    \item \textbf{DHCP} : Oui (100–150)
+    \item \textbf{Accès} : Serveurs AD + Internet (proxy filtrant)
+    \item \textbf{Isolation} : Oui, séparé de V20/V50/V60
+\end{itemize}
+
+\section{Département Commercial — V20}
+
+\begin{itemize}
+    \item \textbf{Réseau} : 192.168.20.0/24
+    \item \textbf{DHCP} : Non (adresses statiques)
+    \item \textbf{Accès} : Serveurs AD + Internet (proxy filtrant)
+    \item \textbf{Isolation} : Oui, adresses préassignées pour chaque vendeur
+\end{itemize}
+
+\section{Département Informatique — V30}
+
+\begin{itemize}
+    \item \textbf{Réseau} : 192.168.30.0/24
+    \item \textbf{DHCP} : Oui (100–150)
+    \item \textbf{Accès} : Tous les VLANs (administration complète)
+    \item \textbf{Isolation} : Non — accès transversal complet requis
+\end{itemize}
+
+\section{Département Ressources Humaines — V50}
+
+\begin{itemize}
+    \item \textbf{Réseau} : 192.168.50.0/24
+    \item \textbf{DHCP} : Oui (100–150)
+    \item \textbf{Accès} : Serveurs AD + Internet restrictif (email uniquement)
+    \item \textbf{Isolation} : Oui, données sensibles
+\end{itemize}
+
+\section{Département Comptabilité — V60}
+
+\begin{itemize}
+    \item \textbf{Réseau} : 192.168.60.0/24
+    \item \textbf{DHCP} : Oui (100–150)
+    \item \textbf{Accès} : Serveurs AD + Internet très restrictif (HTTPS only)
+    \item \textbf{Isolation} : Oui, isolation maximale (données financières)
+\end{itemize}
+
+\section{Serveurs — V40}
+
+\begin{itemize}
+    \item \textbf{Réseau} : 192.168.40.0/24
+    \item \textbf{DHCP} : Non (adresses statiques)
+    \item \textbf{Accès} : Internet pour mises à jour, communication intra-DC
+    \item \textbf{Isolation} : Bloqués d'initier vers les autres VLANs (sécurité)
+\end{itemize}

@@ -1,0 +1,215 @@
+\chapter{Politiques de groupe (GPOs)}
+
+\section{GPO-PasswordPolicy}
+
+\textbf{Appliquée sur :} Racine du domaine
+
+\subsection{Politique de mot de passe}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|p{3cm}|l|p{4cm}|}
+        \hline
+        \textbf{Paramètre} & \textbf{Valeur} & \textbf{Justification} \\
+        \hline
+        Enforce password history & 24 & Empêche réutilisation immédiate \\
+        \hline
+        Max password age & 90 jours & Force changement régulier \\
+        \hline
+        Min password age & 45 jours & Empêche changement trop fréquent \\
+        \hline
+        Min password length & 10 chars & Force sécurité suffisante \\
+        \hline
+        Complexity required & Enabled & Maj, min, chiffre, symbole \\
+        \hline
+        Reversible encryption & Disabled & Mots de passe restent hashés \\
+        \hline
+    \end{tabularx}
+    \caption{Politique de mot de passe}
+    \label{tab:pwd-policy}
+\end{table}
+
+\subsection{Politique de verrouillage de compte}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|}
+        \hline
+        \textbf{Paramètre} & \textbf{Valeur} \\
+        \hline
+        Lockout threshold & 5 tentatives \\
+        \hline
+        Lockout duration & 30 minutes \\
+        \hline
+        Lockout counter reset & 30 minutes \\
+        \hline
+    \end{tabularx}
+    \caption{Politique de verrouillage}
+    \label{tab:lockout-policy}
+\end{table}
+
+\section{GPO-BaseSecurity}
+
+\textbf{Appliquée sur :} Tous les postes
+
+Paramètres de sécurité de base :
+
+\begin{itemize}
+    \item \textbf{Windows Defender Firewall} : Activé sur tous les profils (Domain, Private, Public)
+    \item \textbf{Windows Defender} : Forcé actif (désactiver l'option "Turn off Defender")
+    \item \textbf{SMBv1} : Désactivé (Network → Lanman Workstation)
+    \item \textbf{AutoRun USB} : Désactivé (AutoPlay Policies → Turn off AutoPlay)
+    \item \textbf{Screen saver} : Timeout 10 minutes + mot de passe
+\end{itemize}
+
+\section{GPO-Bitlocker}
+
+\textbf{Appliquée sur :} Postes sensibles (RH, Comptabilité)
+
+\begin{lstlisting}
+Computer Configuration
+  → Policies
+    → Administrative Templates
+      → Windows Components
+        → Encryption
+          → BitLocker Drive Encryption
+\end{lstlisting}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|p{3cm}|p{4cm}|}
+        \hline
+        \textbf{Paramètre} & \textbf{Valeur} \\
+        \hline
+        Encryption method & AES 256 \\
+        \hline
+        Drive encryption type & Used space only \\
+        \hline
+        Startup auth & TPM + PIN (si pas TPM) \\
+        \hline
+        Recovery key storage & Active Directory \\
+        \hline
+    \end{tabularx}
+    \caption{Configuration BitLocker}
+    \label{tab:bitlocker}
+\end{table}
+
+\section{GPO-Direction}
+
+Héritée de BaseSecurity + PasswordPolicy
+
+\begin{itemize}
+    \item Internet via proxy (filtrage SquidGuard)
+    \item Réseaux sociaux : autorisé
+    \item Streaming vidéo : bloqué
+    \item Téléchargements : bloqués
+\end{itemize}
+
+\section{GPO-Commercial}
+
+Héritée de BaseSecurity + PasswordPolicy
+
+\begin{itemize}
+    \item Internet via proxy (filtrage SquidGuard)
+    \item Réseaux sociaux : autorisé
+    \item Email access : autorisé
+    \item Téléchargements : bloqués
+    \item VLAN 20 (isolation)
+\end{itemize}
+
+\section{GPO-RH}
+
+Héritée de BaseSecurity + PasswordPolicy + BitLocker
+
+\subsection{Blocage USB}
+
+\begin{lstlisting}
+Computer Configuration > Policies > Windows Settings > Security
+  → System Services → USBSTOR
+
+Action       : Update
+Hive         : HKEY_LOCAL_MACHINE
+Key Path     : SYSTEM\CurrentControlSet\Services\USBSTOR
+Value name   : start
+Value type   : REG_DWORD
+Value data   : 4 (disabled)
+\end{lstlisting}
+
+\begin{itemize}
+    \item Internet restrictif (email uniquement)
+    \item Réseaux sociaux : bloqués
+    \item Téléchargements : bloqués
+    \item BitLocker obligatoire
+    \item USB bloqué (USBSTOR désactivé)
+    \item VLAN 50 (isolation)
+\end{itemize}
+
+\section{GPO-Comptabilite}
+
+Héritée de BaseSecurity + PasswordPolicy + BitLocker
+
+\begin{itemize}
+    \item Internet HTTPS uniquement (pas HTTP)
+    \item Tous les téléchargements bloqués
+    \item Réseaux sociaux : bloqués
+    \item BitLocker obligatoire
+    \item USB bloqué (USBSTOR désactivé)
+    \item VLAN 60 (isolation maximale)
+\end{itemize}
+
+\section{GPO-Informatique}
+
+\textbf{Block Inheritance : OUI} (ignore les politiques parentes)
+
+\begin{itemize}
+    \item Accès panel de contrôle complet
+    \item Gestionnaire tâches accessible
+    \item WSUS obligatoire (mises à jour depuis srv-dc01:8530)
+    \item Pas de proxy (accès Internet direct)
+    \item Accès inter-VLAN complet (administration)
+\end{itemize}
+
+\section{GPO-Serveurs}
+
+Appliquée sur OU=Serveurs (DCs, NAS)
+
+\begin{itemize}
+    \item Print Spooler : \textbf{désactivé} (DCs n'impriment pas)
+    \item Firewall Windows : activé
+    \item Advanced audit logging
+    \item Event log retention : 7 jours minimum
+\end{itemize}
+
+\section{PSO (Password Settings Objects)}
+
+Permet plusieurs politiques dans le même domaine.
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|l|l|}
+        \hline
+        \textbf{Groupe} & \textbf{Min Length} & \textbf{Max Age} & \textbf{Lockout} \\
+        \hline
+        IT Admins & 15 & 60 j & 3 \\
+        \hline
+        Utilisateurs & 10 & 90 j & 5 \\
+        \hline
+        Temp Services & 12 & 30 j & 5 \\
+        \hline
+    \end{tabularx}
+    \caption{PSO Configuration}
+    \label{tab:pso}
+\end{table}
+
+\section{Vérification et application}
+
+\begin{lstlisting}[style=powershell]
+# Forcer update GPO
+gpupdate /force
+
+# Voir GPOs appliquées
+gpresult /h report.html
+
+# Tester GPO sur machine
+Get-GPResultantSetOfPolicy -ComputerName PC-BUR01
+\end{lstlisting}

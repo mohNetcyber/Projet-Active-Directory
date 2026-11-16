@@ -1,0 +1,206 @@
+\chapter{Troubleshooting — Cas d'étude DNS}
+
+\section{Symptômes initiaux}
+
+Lors d'un diagnostic complet du domaine, \texttt{dcdiag /test:dns} sur \textbf{srv-dc02} révélait :
+
+\begin{itemize}
+    \item ❌ RReg FAIL : records DNS non enregistrés
+    \item ❌ Missing SRV record : \texttt{\_ldap.\_tcp.gc.\_msdcs.corpmsi.local}
+    \item ❌ Missing A record : \texttt{gc.\_msdcs.corpmsi.local}
+    \item ❌ Global Catalog test : FAIL
+\end{itemize}
+
+\section{Diagnostic étape par étape}
+
+\subsection{Étape 1 — Vérifier la réplication AD}
+
+\begin{lstlisting}[style=powershell]
+repadmin /replsummary
+repadmin /showrepl
+\end{lstlisting}
+
+\textbf{Résultat :} Réplication saine, 0 erreurs. \textit{Pas la cause du problème.}
+
+\subsection{Étape 2 — Vérifier les zones DNS}
+
+Ouvrir DNS Manager sur srv-dc02 et inspecter la zone \texttt{\_msdcs.corpmsi.local} :
+
+\begin{itemize}
+    \item Zone présente ✅
+    \item Dossier \texttt{gc} présent mais VIDE ❌
+    \item Records A et SRV pour Global Catalog absents ❌
+\end{itemize}
+
+\subsection{Étape 3 — Vérifier la synchronisation horloge}
+
+\begin{lstlisting}[style=powershell]
+w32tm /stripchart /computer:srv-dc01 /samples:3
+\end{lstlisting}
+
+\textbf{Découverte critique :}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|l|l|l|l|}
+        \hline
+        \textbf{Serveur} & \textbf{Heure} & \textbf{Timezone} & \textbf{Écart} \\
+        \hline
+        srv-dc01 & 17h48 & Casablanca (UTC+1) & — \\
+        \hline
+        srv-dc02 & 09h46 & Canada/US (UTC-7) & \textbf{8 heures} \\
+        \hline
+    \end{tabularx}
+    \caption{Écart de synchronisation découvert}
+    \label{tab:time-diff}
+\end{table}
+
+\textbf{Cause :} Timezone mal configuré sur srv-dc02 lors du déploiement.
+
+\textbf{Correction :}
+
+\begin{lstlisting}[style=powershell]
+Set-TimeZone -Id "Morocco Standard Time"
+w32tm /resync /force
+\end{lstlisting}
+
+\subsection{Étape 4 — Vérifier le secure channel}
+
+\begin{lstlisting}[style=powershell]
+Test-ComputerSecureChannel -Verbose
+\end{lstlisting}
+
+\textbf{Résultat :} \texttt{FALSE} — Le canal sécurisé est cassé!
+
+\begin{lstlisting}[style=powershell]
+nltest /dsregdns
+
+# Erreur : Connection Status = 1311 0x51f ERROR_NO_LOGON_SERVERS
+\end{lstlisting}
+
+\textbf{Cause racine identifiée :} Sans secure channel, srv-dc02 ne peut pas s'authentifier, donc Netlogon ne peut pas enregistrer les records DNS GC.
+
+\textbf{Correction appliquée :}
+
+\begin{lstlisting}[style=powershell]
+Nltest.exe /sc_change_pwd:corpmsi.local
+\end{lstlisting}
+
+Cette commande force le renouvellement du mot de passe du compte machine, rétablissant le canal Kerberos.
+
+\textbf{Vérification :}
+
+\begin{lstlisting}[style=powershell]
+Test-ComputerSecureChannel -Verbose
+# Résultat : TRUE ✅
+
+nltest /dsregdns
+# Connection Status = 0 0x0 NERR_Success ✅
+\end{lstlisting}
+
+\subsection{Étape 5 — Records DNS GC manquants}
+
+Même après réparation du secure channel, les records ne s'étaient pas auto-enregistrés.
+
+Créer manuellement les records :
+
+\begin{lstlisting}[style=powershell]
+# A record pour Global Catalog
+Add-DnsServerResourceRecordA `
+    -ZoneName "_msdcs.corpmsi.local" `
+    -Name "gc" `
+    -IPv4Address "192.168.40.11" `
+    -TimeToLive (10 * 60)
+
+# SRV record pour LDAP Global Catalog
+Add-DnsServerResourceRecord -Srv `
+    -ZoneName "_msdcs.corpmsi.local" `
+    -Name "_ldap._tcp.gc" `
+    -DomainName "srv-dc02.corpmsi.local" `
+    -Priority 0 -Weight 100 -Port 3268 `
+    -TimeToLive (10 * 60)
+\end{lstlisting}
+
+\section{Chaîne causale des problèmes}
+
+\begin{figure}[H]
+    \centering
+    \fbox{\parbox{0.85\linewidth}{\centering
+    \begin{verbatim}
+Timezone incorrect sur srv-dc02
+        ↓
+Comportements Windows anormaux / Netlogon instable
+        ↓
+Secure Channel Kerberos cassé
+        ↓
+ERROR_NO_LOGON_SERVERS
+        ↓
+Netlogon ne peut s'authentifier
+        ↓
+Records DNS GC non enregistrés automatiquement
+        ↓
+dcdiag /test:dns FAIL sur srv-dc02
+    \end{verbatim}
+    \vspace{0.5cm}}}
+    \caption{Chaîne causale des problèmes DNS}
+    \label{fig:dns-chain}
+\end{figure}
+
+\section{Résultat final}
+
+\begin{lstlisting}[style=powershell]
+dcdiag /test:dns
+
+# Avant correction :
+# srv-dc01 : PASS (local)
+# srv-dc02 : FAIL (records manquants)
+
+# Après correction :
+# srv-dc01 : PASS
+# srv-dc02 : PASS ✅
+\end{lstlisting}
+
+\section{Commandes clés de diagnostic}
+
+\begin{table}[H]
+    \centering
+    \begin{tabularx}{\textwidth}{|p{3cm}|p{4cm}|}
+        \hline
+        \textbf{Commande} & \textbf{Diagnostic} \\
+        \hline
+        \texttt{dcdiag /test:replications} & Vérifier réplication AD \\
+        \hline
+        \texttt{dcdiag /test:dns} & Valider toutes les zones DNS \\
+        \hline
+        \texttt{dcdiag /test:netlogons} & Vérifier Netlogon \\
+        \hline
+        \texttt{dcdiag /test:fsmocheck} & Vérifier rôles FSMO \\
+        \hline
+        \texttt{w32tm /query /source} & Source NTP actuelle \\
+        \hline
+        \texttt{w32tm /stripchart /computer:srv-dc01} & Écart temps \\
+        \hline
+        \texttt{Test-ComputerSecureChannel} & État secure channel \\
+        \hline
+        \texttt{nltest /dsregdns} & Vérifier registration DNS machine \\
+        \hline
+        \texttt{nslookup -type=SRV \_ldap.\_tcp.gc.\_msdcs.corpmsi.local} & Vérifier record SRV GC \\
+        \hline
+    \end{tabularx}
+    \caption{Commandes de diagnostic essentielles}
+    \label{tab:diagnostic-cmds}
+\end{table}
+
+\section{Leçons apprises}
+
+\begin{enumerate}
+    \item \textbf{Timezone est critique} : Un décalage de timezone crée des anomalies subtiles qui n'apparaissent que lors du diagnostic complet.
+    
+    \item \textbf{Secure channel = fondation} : Sans lui, toute authentification Kerberos échoue silencieusement.
+    
+    \item \textbf{DNS GC est vital} : Les records Global Catalog manquants peuvent paralyser les recherches AD de l'ensemble de la forêt.
+    
+    \item \textbf{Diagnostic progressif} : Tester réplication → heure → secure channel → DNS. L'ordre est important.
+    
+    \item \textbf{Records manuels comme fallback} : Même après réparation, certains records peuvent nécessiter création manuelle.
+\end{enumerate}
